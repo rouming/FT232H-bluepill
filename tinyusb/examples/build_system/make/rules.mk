@@ -110,10 +110,14 @@ $(BUILD)/$(BOARD).jlink: $(BUILD)/$(PROJECT).hex
 flash-jlink: $(BUILD)/$(BOARD).jlink
 	$(JLINKEXE) -device $(JLINK_DEVICE) -if $(JLINK_IF) -JTAGConf -1,-1 -speed auto -CommandFile $<
 
-# --------------- stm32 cube programmer -----------------
-# Flash STM32 MCU using stlink with STM32 Cube Programmer CLI
-flash-stlink: $(BUILD)/$(PROJECT).elf
-	STM32_Programmer_CLI --connect port=swd --write $< --go
+# --------------- st-link  -----------------
+flash-stlink: $(BUILD)/$(PROJECT).bin
+ifdef SERIAL
+	st-flash --serial $(SERIAL) --reset write $< 0x8000000
+else
+	echo "SERIAL is not set. Call '$ st-info --probe' and copy-paste serial"
+	exit 1
+endif
 
 # --------------- xfel -----------------
 $(BUILD)/$(PROJECT)-sunxi.bin: $(BUILD)/$(PROJECT).bin
