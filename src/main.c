@@ -27,26 +27,52 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "stm32f1xx_hal.h"
+
 #include "bsp/board_api.h"
 #include "tusb.h"
 
 enum  {
+	BLINK_ERROR		  = 50,
 	BLINK_NOT_MOUNTED = 250,
-	BLINK_MOUNTED		= 500,
-	BLINK_SUSPENDED	= 2500,
+	BLINK_MOUNTED	  = 500,
+	BLINK_SUSPENDED	  = 2500,
 
-	BLINK_ALWAYS_ON	= UINT32_MAX,
-	BLINK_ALWAYS_OFF	= 0
+	BLINK_ALWAYS_ON	  = UINT32_MAX,
+	BLINK_ALWAYS_OFF  = 0
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+SPI_HandleTypeDef hspi1;
 
+static void error_with_led(void);
 static void led_blinking_task(void);
 static void ftdi_task(void);
+
+static void spi1_init(void)
+{
+	/* SPI1 parameter configuration*/
+	hspi1.Instance = SPI1;
+	hspi1.Init.Mode = SPI_MODE_MASTER;
+	hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+	hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+	hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+	hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+	hspi1.Init.NSS = SPI_NSS_SOFT;
+	hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+	hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+	hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+	hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+	hspi1.Init.CRCPolynomial = 10;
+	if (HAL_SPI_Init(&hspi1) != HAL_OK) {
+		error_with_led();
+	}
+}
 
 int main(void)
 {
 	board_init();
+	spi1_init();
 
 	// init device stack on configured roothub port
 	tud_init(BOARD_TUD_RHPORT);
@@ -189,4 +215,12 @@ static void led_blinking_task(void)
 
 	board_led_write(led_state);
 	led_state = 1 - led_state;
+}
+
+static void error_with_led(void)
+{
+	blink_interval_ms = BLINK_ERROR;
+	while (1) {
+		led_blinking_task();
+	}
 }
