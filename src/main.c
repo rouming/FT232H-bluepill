@@ -83,9 +83,7 @@
 #define FTDI_SIO_READ_PINS		0x0c /* Read immediate value of pins */
 #define FTDI_SIO_READ_EEPROM		0x90 /* Read EEPROM */
 
-#define	 FTDI_SIO_GET_LATENCY_TIMER_REQUEST_TYPE 0xC0
-#define	 FTDI_SIO_SET_LATENCY_TIMER_REQUEST_TYPE 0x40
-#define	 FTDI_SIO_READ_EEPROM_REQUEST_TYPE 0xc0
+#define FTDI_CLK_FREQ                   12000000
 
 enum  {
 	BLINK_ERROR	  = 50,
@@ -94,16 +92,74 @@ enum  {
 	BLINK_SUSPENDED	  = 2500,
 
 	BLINK_ALWAYS_ON	  = UINT32_MAX,
-	BLINK_ALWAYS_OFF  = 0
+	BLINK_ALWAYS_OFF  = 0,
+
+	DMA_GPIO_NUM      = 128,
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+static uint32_t dma_gpio_arr[DMA_GPIO_NUM];
+
+static uint32_t clk_freq = FTDI_CLK_FREQ;
+
+static uint8_t gpio_low_dir;
+static uint8_t gpio_low_val;
+static uint8_t gpio_high_dir;
+static uint8_t gpio_high_val;
+
 SPI_HandleTypeDef hspi1;
+TIM_HandleTypeDef htim1;
+DMA_HandleTypeDef hdma_tim1_up;
 
 __attribute__((noreturn))
 static void error_with_led(void);
 static void led_blinking_task(void);
 static void ftdi_task(void);
+static void ftdi_reset(void);
+static void ftdi_set_bits_low(uint8_t value, uint8_t dir);
+static void ftdi_set_bits_high(uint8_t value, uint8_t dir);
+
+static void dma_init(void)
+{
+	/* DMA controller clock enable */
+	__HAL_RCC_DMA1_CLK_ENABLE();
+
+	/* DMA interrupt init */
+	/* DMA1_Channel5_IRQn interrupt configuration */
+	HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+	HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+}
+
+static bool tim1_init(uint32_t freq)
+{
+	TIM_ClockConfigTypeDef clk;
+	TIM_MasterConfigTypeDef master;
+
+	htim1.Instance = TIM1;
+	htim1.Init.Prescaler = 0;
+	htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim1.Init.Period = SystemCoreClock / freq / 2;
+	htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim1.Init.RepetitionCounter = 0;
+	htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+		return false;
+
+	clk = (TIM_ClockConfigTypeDef) {
+		.ClockSource = TIM_CLOCKSOURCE_INTERNAL,
+	};
+	if (HAL_TIM_ConfigClockSource(&htim1, &clk) != HAL_OK)
+		return false;
+
+	master = (TIM_MasterConfigTypeDef) {
+		.MasterOutputTrigger = TIM_TRGO_UPDATE,
+		.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE,
+	};
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &master) != HAL_OK)
+		return false;
+
+	return true;
+}
 
 static void spi1_init(uint8_t cmd)
 {
@@ -160,9 +216,8 @@ static void spi1_init(uint8_t cmd)
 	hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
 	hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
 	hspi1.Init.CRCPolynomial = 10;
-	if (HAL_SPI_Init(&hspi1) != HAL_OK) {
+	if (HAL_SPI_Init(&hspi1) != HAL_OK)
 		error_with_led();
-	}
 }
 
 static void spi1_deinit(void)
@@ -170,11 +225,15 @@ static void spi1_deinit(void)
 	HAL_SPI_DeInit(&hspi1);
 	__HAL_RCC_SPI1_CLK_DISABLE();
 	HAL_NVIC_DisableIRQ(SPI1_IRQn);
+
+	/* Restore GPIO to values before SPI */
+	ftdi_set_bits_low(gpio_low_val, gpio_low_dir);
 }
 
 int main(void)
 {
 	board_init();
+	dma_init();
 
 	// init device stack on configured roothub port
 	tud_init(BOARD_TUD_RHPORT);
@@ -254,6 +313,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 		case FTDI_SIO_SET_BITMODE:
 			return tud_control_xfer(rhport, request, NULL, 0);
 		case FTDI_SIO_RESET:
+			ftdi_reset();
 			return tud_control_xfer(rhport, request, NULL, 0);
 		case FTDI_SIO_SET_BAUD_RATE:
 			return tud_control_xfer(rhport, request, NULL, 0);
@@ -294,6 +354,9 @@ static void set_gpio(GPIO_TypeDef *GPIOx, uint32_t pin, bool out, bool high)
  */
 static void ftdi_set_bits_low(uint8_t value, uint8_t dir)
 {
+	gpio_low_dir = dir;
+	gpio_low_val = value;
+
 	set_gpio(GPIOA, GPIO_PIN_5, dir & TU_BIT(0), value & TU_BIT(0));
 	set_gpio(GPIOA, GPIO_PIN_7, dir & TU_BIT(1), value & TU_BIT(1));
 	set_gpio(GPIOA, GPIO_PIN_6, dir & TU_BIT(2), value & TU_BIT(2));
@@ -317,6 +380,9 @@ static void ftdi_set_bits_low(uint8_t value, uint8_t dir)
  */
 static void ftdi_set_bits_high(uint8_t value, uint8_t dir)
 {
+	gpio_high_dir = dir;
+	gpio_high_val = value;
+
 	set_gpio(GPIOB, GPIO_PIN_12, dir & TU_BIT(0), value & TU_BIT(0));
 	set_gpio(GPIOB, GPIO_PIN_13, dir & TU_BIT(1), value & TU_BIT(1));
 	set_gpio(GPIOB, GPIO_PIN_14, dir & TU_BIT(2), value & TU_BIT(2));
@@ -327,11 +393,23 @@ static void ftdi_set_bits_high(uint8_t value, uint8_t dir)
 	set_gpio(GPIOA, GPIO_PIN_11, dir & TU_BIT(7), value & TU_BIT(7));
 }
 
+static void ftdi_reset(void)
+{
+	/* To defaul freqeuncy */
+	clk_freq = FTDI_CLK_FREQ;
+
+	/* All to in */
+	ftdi_set_bits_low(0, 0);
+	ftdi_set_bits_high(0, 0);
+}
+
 static void ftdi_set_tck_divisor(uint8_t low, uint8_t high)
 {
-	(void)low;
-	(void)high;
-	/* TODO */
+	uint16_t div = ((uint16_t)high << 8) | low;
+	uint32_t freq = FTDI_CLK_FREQ / ((1 + div) * 2);
+
+	if (freq)
+		clk_freq = freq;
 }
 
 static bool ftdi_mpsse_write_read(uint8_t cmd, uint8_t low, uint8_t high)
@@ -389,10 +467,78 @@ static bool ftdi_mpsse_write_read(uint8_t cmd, uint8_t low, uint8_t high)
 
 static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 {
-	uint16_t len = ((uint16_t)high << 8) | low;
+	static bool started;
+	uint16_t num, i;
 
-	(void)len;
-	/* TODO */
+	if (!started) {
+		bool transition;
+
+		num = (((uint16_t)high << 8) | low);
+		/* Plus 1 according to FTDI datasheet */
+		num += 1;
+		/* In bits */
+		num *= 8;
+		/* Rising and falling edge of clock pulses */
+		num *= 2;
+
+		/* Start from 0 */
+		i = 0;
+		transition = false;
+
+		if ((gpio_low_dir & TU_BIT(0)) &&
+		    (gpio_low_val & TU_BIT(0))) {
+			/* Account 2 edge transitions */
+			transition = true;
+			num += 2;
+			i = 1;
+		}
+
+		if (num > DMA_GPIO_NUM)
+			error_with_led();
+
+		/* Init timer and clock source */
+		tim1_init(clk_freq);
+
+		if (!(gpio_low_dir & TU_BIT(0))) {
+			/* Init PA5 as a clock pin */
+			set_gpio(GPIOA, GPIO_PIN_5, true, false);
+		} else if (transition) {
+			/* Reset */
+			dma_gpio_arr[0] = GPIO_PIN_5 << 16;
+			/* Set */
+			dma_gpio_arr[num - 1] = GPIO_PIN_5;
+		}
+		for (; i < num; i += 2) {
+			/* Set */
+			dma_gpio_arr[i] = GPIO_PIN_5;
+			/* Reset */
+			dma_gpio_arr[i+1] = GPIO_PIN_5 << 16;
+		}
+
+		/*
+		 * Start DMA and timer to the BSRR gpio register.
+		 * See the RM0008 Reference Manual 9.2.5 for details.
+		 */
+		HAL_DMA_Start_IT(&hdma_tim1_up, (uintptr_t)dma_gpio_arr,
+				 (uintptr_t)&(GPIOA->BSRR), num);
+		HAL_TIM_Base_Start(&htim1);
+		__HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
+		started = true;
+	}
+	if (hdma_tim1_up.State != HAL_DMA_STATE_READY)
+		return false;
+
+	/* DMA completed, stop timer */
+	HAL_TIM_Base_Stop(&htim1);
+	__HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
+	HAL_TIM_Base_DeInit(&htim1);
+	/* Restore GPIO */
+	if (!(gpio_low_dir & TU_BIT(0)))
+		set_gpio(GPIOA, GPIO_PIN_5, false, false);
+
+	started = false;
+
+	/* Done */
 	return true;
 }
 
