@@ -165,10 +165,32 @@ static void spi1_init(uint8_t cmd)
 {
 	bool rx = cmd & MPSSE_DO_READ;
 	bool tx = cmd & MPSSE_DO_WRITE;
-	bool rx_neg = cmd & MPSSE_WRITE_NEG;
-	bool tx_neg = cmd & MPSSE_READ_NEG;
+	bool tx_neg = cmd & MPSSE_WRITE_NEG;
 	bool lsb = cmd & MPSSE_LSB;
+	bool clk_pol = (gpio_low_val & TU_BIT(0));
+	uint32_t clk_phase;
 	GPIO_InitTypeDef gpio;
+
+	if (!(gpio_low_dir & TU_BIT(0)))
+	    /*
+	     * We control SPI CLK polarity by initial setting of CLK pin,
+	     * which should be already configured as output. Consider as
+	     * fatal. Yeah, proper error should be returned, I know.
+	     */
+	    error_with_led();
+
+	if (!clk_pol && !tx_neg)
+		/* SPI mode 1 (out on +v edge, in on -v edge) */
+		clk_phase = SPI_PHASE_2EDGE;
+	else if (!clk_pol && tx_neg)
+		/* SPI mode 0 (out on -v edge, in on +v edge) */
+		clk_phase = SPI_PHASE_1EDGE;
+	else if (clk_pol && !tx_neg)
+		/* SPI mode 2 (out on +v edge, in on -v edge) */
+		clk_phase = SPI_PHASE_1EDGE;
+	else
+		/* SPI mode 3 (out on -v edge, in on +v edge) */
+		clk_phase = SPI_PHASE_2EDGE;
 
 	__HAL_RCC_SPI1_CLK_ENABLE();
 
@@ -204,10 +226,10 @@ static void spi1_init(uint8_t cmd)
 		SPI_DIRECTION_2LINES_RXONLY :
 		SPI_DIRECTION_2LINES;
 	hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
-	hspi1.Init.CLKPolarity = rx_neg || tx_neg ?
-		SPI_POLARITY_LOW :
-		SPI_POLARITY_HIGH;
-	hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
+	hspi1.Init.CLKPolarity = clk_pol ?
+		SPI_POLARITY_HIGH :
+		SPI_POLARITY_LOW;
+	hspi1.Init.CLKPhase = clk_phase;
 	hspi1.Init.NSS = SPI_NSS_SOFT;
 	hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
 	hspi1.Init.FirstBit = lsb ?
@@ -503,9 +525,9 @@ static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 			/* Init PA5 as a clock pin */
 			set_gpio(GPIOA, GPIO_PIN_5, true, false);
 		} else if (transition) {
-			/* Reset */
+			/* Reset first */
 			dma_gpio_arr[0] = GPIO_PIN_5 << 16;
-			/* Set */
+			/* Set last */
 			dma_gpio_arr[num - 1] = GPIO_PIN_5;
 		}
 		for (; i < num; i += 2) {
