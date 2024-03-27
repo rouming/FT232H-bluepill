@@ -507,10 +507,37 @@ static void ftdi_set_clk_pin(uint8_t val)
 	clk_pin = val;
 }
 
+static void ftdi_get_clk_gpio(const struct gpio_desc **desc,
+			      bool *dir, bool *val)
+{
+	const struct gpio_desc *map;
+	uint8_t bank, pin;
+
+	bank = clk_pin / 8;
+	pin = clk_pin % 8;
+
+	if (bank == 0) {
+		map = low_pin_mapping;
+		*dir = gpio_low_dir & TU_BIT(pin);
+		*val = gpio_low_val & TU_BIT(pin);
+	} else {
+		map = high_pin_mapping;
+		*dir = gpio_high_dir & TU_BIT(pin);
+		*val = gpio_high_val & TU_BIT(pin);
+	}
+	*desc = &map[pin];
+}
+
 static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 {
 	static bool started;
+
+	const struct gpio_desc *gpio;
+	bool dir, val;
 	uint16_t num, i;
+
+	/* Get clock GPIO bank, pin, and current direction and value */
+	ftdi_get_clk_gpio(&gpio, &dir, &val);
 
 	if (!started) {
 		bool transition;
@@ -527,8 +554,7 @@ static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 		i = 0;
 		transition = false;
 
-		if ((gpio_low_dir & TU_BIT(0)) &&
-		    (gpio_low_val & TU_BIT(0))) {
+		if (dir && val) {
 			/* Account 2 edge transitions */
 			transition = true;
 			num += 2;
@@ -541,20 +567,20 @@ static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 		/* Init timer and clock source */
 		tim1_init(clk_freq);
 
-		if (!(gpio_low_dir & TU_BIT(0))) {
-			/* Init PA5 as a clock pin */
-			set_gpio(GPIOA, GPIO_PIN_5, true, false);
+		if (!dir) {
+			/* Init GPIO as a clock pin */
+			set_gpio(gpio->bank, gpio->pin, true, false);
 		} else if (transition) {
 			/* Reset first */
-			dma_gpio_arr[0] = GPIO_PIN_5 << 16;
+			dma_gpio_arr[0] = (gpio->pin << 16);
 			/* Set last */
-			dma_gpio_arr[num - 1] = GPIO_PIN_5;
+			dma_gpio_arr[num - 1] = gpio->pin;
 		}
 		for (; i < num; i += 2) {
 			/* Set */
-			dma_gpio_arr[i] = GPIO_PIN_5;
+			dma_gpio_arr[i] = gpio->pin;
 			/* Reset */
-			dma_gpio_arr[i+1] = GPIO_PIN_5 << 16;
+			dma_gpio_arr[i+1] = (gpio->pin << 16);
 		}
 
 		/*
@@ -575,8 +601,8 @@ static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
 	__HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
 	HAL_TIM_Base_DeInit(&htim1);
 	/* Restore GPIO */
-	if (!(gpio_low_dir & TU_BIT(0)))
-		set_gpio(GPIOA, GPIO_PIN_5, false, false);
+	if (!dir)
+		set_gpio(gpio->bank, gpio->pin, false, false);
 
 	started = false;
 
