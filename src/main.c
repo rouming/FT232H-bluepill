@@ -111,6 +111,33 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim1;
 DMA_HandleTypeDef hdma_tim1_up;
 
+struct gpio_desc {
+	GPIO_TypeDef *bank;
+	uint32_t      pin;
+};
+
+static const struct gpio_desc low_pin_mapping[8] = {
+	[0] = { GPIOA, GPIO_PIN_5 }, /* AD0 -> PA5 */
+	[1] = { GPIOA, GPIO_PIN_7 }, /* AD1 -> PA7 */
+	[2] = { GPIOA, GPIO_PIN_6 }, /* AD2 -> PA6 */
+	[3] = { GPIOA, GPIO_PIN_4 }, /* AD3 -> PA4 */
+	[4] = { GPIOA, GPIO_PIN_3 }, /* AD4 -> PA3 */
+	[5] = { GPIOA, GPIO_PIN_2 }, /* AD5 -> PA2 */
+	[6] = { GPIOA, GPIO_PIN_1 }, /* AD6 -> PA1 */
+	[7] = { GPIOA, GPIO_PIN_0 }, /* AD7 -> PA0 */
+};
+
+static const struct gpio_desc high_pin_mapping[8] = {
+	[0] = { GPIOB, GPIO_PIN_12 }, /* AC0 -> PB12 */
+	[1] = { GPIOB, GPIO_PIN_13 }, /* AC1 -> PB13 */
+	[2] = { GPIOB, GPIO_PIN_14 }, /* AC2 -> PB14 */
+	[3] = { GPIOB, GPIO_PIN_15 }, /* AC3 -> PB15 */
+	[4] = { GPIOA, GPIO_PIN_8  }, /* AC4 -> PA8  */
+	[5] = { GPIOA, GPIO_PIN_9  }, /* AC5 -> PA9  */
+	[6] = { GPIOA, GPIO_PIN_10 }, /* AC6 -> PA10 */
+	[7] = { GPIOA, GPIO_PIN_11 }, /* AC7 -> PA11 */
+};
+
 __attribute__((noreturn))
 static void error_with_led(void);
 static void led_blinking_task(void);
@@ -363,56 +390,32 @@ static void set_gpio(GPIO_TypeDef *GPIOx, uint32_t pin, bool out, bool high)
 	HAL_GPIO_Init(GPIOx, &gpio);
 }
 
-/*
- * FTDI    STM32
- *  AD0 -> PA5
- *  AD1 -> PA7
- *  AD2 -> PA6
- *  AD3 -> PA4
- *  AD4 -> PA3
- *  AD5 -> PA2
- *  AD6 -> PA1
- *  AD7 -> PA0
- */
-static void ftdi_set_bits_low(uint8_t value, uint8_t dir)
+static void __set_bits(const struct gpio_desc *map,
+		       uint8_t value, uint8_t dir)
 {
-	gpio_low_dir = dir;
-	gpio_low_val = value;
+	int i;
 
-	set_gpio(GPIOA, GPIO_PIN_5, dir & TU_BIT(0), value & TU_BIT(0));
-	set_gpio(GPIOA, GPIO_PIN_7, dir & TU_BIT(1), value & TU_BIT(1));
-	set_gpio(GPIOA, GPIO_PIN_6, dir & TU_BIT(2), value & TU_BIT(2));
-	set_gpio(GPIOA, GPIO_PIN_4, dir & TU_BIT(3), value & TU_BIT(3));
-	set_gpio(GPIOA, GPIO_PIN_3, dir & TU_BIT(4), value & TU_BIT(4));
-	set_gpio(GPIOA, GPIO_PIN_2, dir & TU_BIT(5), value & TU_BIT(5));
-	set_gpio(GPIOA, GPIO_PIN_1, dir & TU_BIT(6), value & TU_BIT(6));
-	set_gpio(GPIOA, GPIO_PIN_0, dir & TU_BIT(7), value & TU_BIT(7));
+	for (i = 0; i < 8; i++)
+		set_gpio(map[i].bank, map[i].pin,
+			 dir & TU_BIT(i), value & TU_BIT(i));
 }
 
-/*
- * FTDI    STM32
- *  AC0 -> PB12
- *  AC1 -> PB13
- *  AC2 -> PB14
- *  AC3 -> PB15
- *  AC4 -> PA8
- *  AC5 -> PA9
- *  AC6 -> PA10
- *  AC7 -> PA11
- */
+static void ftdi_set_bits_low(uint8_t value, uint8_t dir)
+{
+	const struct gpio_desc *map = low_pin_mapping;
+
+	gpio_low_dir = dir;
+	gpio_low_val = value;
+	__set_bits(map, value, dir);
+}
+
 static void ftdi_set_bits_high(uint8_t value, uint8_t dir)
 {
+	const struct gpio_desc *map = high_pin_mapping;
+
 	gpio_high_dir = dir;
 	gpio_high_val = value;
-
-	set_gpio(GPIOB, GPIO_PIN_12, dir & TU_BIT(0), value & TU_BIT(0));
-	set_gpio(GPIOB, GPIO_PIN_13, dir & TU_BIT(1), value & TU_BIT(1));
-	set_gpio(GPIOB, GPIO_PIN_14, dir & TU_BIT(2), value & TU_BIT(2));
-	set_gpio(GPIOB, GPIO_PIN_15, dir & TU_BIT(3), value & TU_BIT(3));
-	set_gpio(GPIOA, GPIO_PIN_8,  dir & TU_BIT(4), value & TU_BIT(4));
-	set_gpio(GPIOA, GPIO_PIN_9,  dir & TU_BIT(5), value & TU_BIT(5));
-	set_gpio(GPIOA, GPIO_PIN_10, dir & TU_BIT(6), value & TU_BIT(6));
-	set_gpio(GPIOA, GPIO_PIN_11, dir & TU_BIT(7), value & TU_BIT(7));
+	__set_bits(map, value, dir);
 }
 
 static void ftdi_reset(void)
