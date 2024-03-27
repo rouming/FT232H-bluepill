@@ -83,8 +83,6 @@
 #define FTDI_SIO_READ_PINS		0x0c /* Read immediate value of pins */
 #define FTDI_SIO_READ_EEPROM		0x90 /* Read EEPROM */
 
-#define FTDI_CLK_FREQ                   12000000
-
 enum  {
 	BLINK_ERROR	  = 50,
 	BLINK_NOT_MOUNTED = 250,
@@ -94,13 +92,14 @@ enum  {
 	BLINK_ALWAYS_ON	  = UINT32_MAX,
 	BLINK_ALWAYS_OFF  = 0,
 
+	CLK_FREQ          = 12000000,
 	DMA_GPIO_NUM      = 128,
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 static uint32_t dma_gpio_arr[DMA_GPIO_NUM];
 
-static uint32_t clk_freq = FTDI_CLK_FREQ;
+static uint32_t clk_freq = CLK_FREQ;
 
 static uint8_t gpio_low_dir;
 static uint8_t gpio_low_val;
@@ -420,8 +419,8 @@ static void ftdi_set_bits_high(uint8_t value, uint8_t dir)
 
 static void ftdi_reset(void)
 {
-	/* To defaul freqeuncy */
-	clk_freq = FTDI_CLK_FREQ;
+	/* To default freqeuncy */
+	clk_freq = CLK_FREQ;
 
 	/* All to in */
 	ftdi_set_bits_low(0, 0);
@@ -431,7 +430,7 @@ static void ftdi_reset(void)
 static void ftdi_set_tck_divisor(uint8_t low, uint8_t high)
 {
 	uint16_t div = ((uint16_t)high << 8) | low;
-	uint32_t freq = FTDI_CLK_FREQ / ((1 + div) * 2);
+	uint32_t freq = CLK_FREQ / ((1 + div) * 2);
 
 	if (freq)
 		clk_freq = freq;
