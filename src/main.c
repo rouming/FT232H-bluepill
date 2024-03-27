@@ -67,6 +67,9 @@
 #define CLK_BYTES_OR_HIGH 0x9c
 #define CLK_BYTES_OR_LOW  0x9d
 
+/* Custom commands */
+#define SET_CLK_PIN       0xb0
+
 /* Commands */
 #define FTDI_SIO_RESET			0 /* Reset the port */
 #define FTDI_SIO_MODEM_CTRL		1 /* Set the modem control register */
@@ -93,6 +96,7 @@ enum  {
 	BLINK_ALWAYS_OFF  = 0,
 
 	CLK_FREQ          = 12000000,
+	CLK_PIN           = 0, /* AD0 by default */
 	DMA_GPIO_NUM      = 128,
 };
 
@@ -100,6 +104,7 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 static uint32_t dma_gpio_arr[DMA_GPIO_NUM];
 
 static uint32_t clk_freq = CLK_FREQ;
+static uint8_t  clk_pin  = CLK_PIN;
 
 static uint8_t gpio_low_dir;
 static uint8_t gpio_low_val;
@@ -421,6 +426,8 @@ static void ftdi_reset(void)
 {
 	/* To default freqeuncy */
 	clk_freq = CLK_FREQ;
+	/* To default pin */
+	clk_pin = CLK_PIN;
 
 	/* All to in */
 	ftdi_set_bits_low(0, 0);
@@ -487,6 +494,17 @@ static bool ftdi_mpsse_write_read(uint8_t cmd, uint8_t low, uint8_t high)
 	}
 
 	return false;
+}
+
+static void ftdi_set_clk_pin(uint8_t val)
+{
+	uint8_t bank = val / 8;
+
+	if (bank > 1)
+		/* Icorrect value */
+		error_with_led();
+
+	clk_pin = val;
 }
 
 static bool ftdi_clk_bytes(uint8_t low, uint8_t high)
@@ -595,6 +613,14 @@ static void ftdi_task(void)
 
 		tud_vendor_read(buf, 2);
 		ftdi_set_bits_high(buf[0], buf[1]);
+		cmd = 0;
+	} else if (cmd == SET_CLK_PIN) {
+		/* Custom command */
+		if (tud_vendor_available() < 1)
+			return;
+
+		tud_vendor_read(buf, 1);
+		ftdi_set_clk_pin(buf[0]);
 		cmd = 0;
 	} else if (cmd & (MPSSE_DO_WRITE|MPSSE_DO_READ) ||
 		   cmd == CLK_BYTES) {
