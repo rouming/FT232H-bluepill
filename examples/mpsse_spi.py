@@ -56,7 +56,15 @@ def ftdi_set_clock(d, hz):
     ftdi_write(d, (TCK_DIVISOR, div%256, div//256))
 
 def ftdi_read(d, nbytes):
-    s = d.read(nbytes)
+    while True:
+        # Read unless zero. FTDI periodically returns 2 byte modem
+        # status with latency timer period, despite the lack of data
+        # in the buffer, so higher level API reports 0 read bytes.
+        # One of the solutions is to purge the TX USB buffer
+        # (tciflush) or simply wait for data to appear on the pipe.
+        s = d.read(nbytes)
+        if len(s) > 0:
+            break
     return list(s)
 
 def ftdi_write(d, data):
@@ -84,14 +92,6 @@ def main():
 
     # Data byte
     byte = 0x81
-
-    # Every bulk write is responded with a bulk IN packet by the FTDI USB
-    # implementation, so you need to do read() after every write().
-    # We can avoid that by simply discarding all other IN packets just
-    # before write which generates real bulk IN response. This has to be
-    # done on real the FTDI device, at least I see this behavior constantly
-    # on the FT232H. This STM32 implementation does not require that cludge.
-    d.ftdi_fn.ftdi_usb_purge_tx_buffer()
 
     #
     # SPI mode 0:
