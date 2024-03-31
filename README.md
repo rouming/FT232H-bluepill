@@ -16,15 +16,17 @@ limitation of MPSSE engine." Yeah, limitations, sure thing.
 When tinkering with the original FT232H, I stumbled upon another issue. It led
 to a messy workaround of clearing the TX buffer on the device side before
 sending an MPSSE write request that generates a read response (like an SPI
-read triggered by the MPSSE_DO_READ (0x20) bit). Turns out, the FT232H USB
-setup prepares a bulk read "IN" packet every time it receives a write "OUT"
-bulk packet. You can easily find people griping about this by Googling
-something like "FT_Read() returns 0 bytes". The workaround involves calling
-`ftdi_usb_purge_tx_buffer()` just before the write request. Maybe I'm doing
-something wrong, but the non-blocking behavior seems odd to me. Anyway, with
-plenty of library implementations out there (C, Python, Go, etc.), why not
+read triggered by the MPSSE_DO_READ (0x20) bit). Turns out, the FTDI chip
+sends 2-byte modem status in each USB "IN" packet once latency timeout (16 ms)
+expires. The behavior well described [here](https://www.ftdichip.com/Documents/AppNotes/AN232B-04_DataLatencyFlow.pdf). This leads to a lot of confusion and people complain about
+the "FT_Read() returns 0 bytes" problem. The workaround involves calling
+`ftdi_usb_purge_tx_buffer()` or `tciflush()` just before the write request,
+or reading data unless zero length is received. Anyway, with plenty of library
+implementations out there (C, Python, Go, etc.), why not
 implement the necessary stuff in the STM32 firmware and run it smoothly on
-the BluePill without these headaches?
+the BluePill without these headaches? (Yeah, for now I decided to make read
+blocking to avoid an flushing, since UART is not supported, but that should
+be easy to fix in the future).
 
 ### How to use
 
