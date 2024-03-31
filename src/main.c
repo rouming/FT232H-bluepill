@@ -482,9 +482,10 @@ static bool ftdi_mpsse_write_read(uint8_t cmd, uint8_t low, uint8_t high)
 		read = false;
 
 		if (cmd & MPSSE_DO_READ) {
-			/* Push length */
-			tud_vendor_write(&low, 1);
-			tud_vendor_write(&high, 1);
+			uint16_t status = 0;
+
+			/* Push modem and line status bytes  */
+			tud_vendor_write(&status, 2);
 			/* Push buffer */
 			tud_vendor_write(in, len);
 			tud_vendor_write_flush();
